@@ -42,11 +42,16 @@ async def on_ready():
     print('------')
     
     # Sync slash commands with Discord
+    # This syncs commands globally - can take up to 1 hour to appear
+    # For faster testing, use guild-specific sync (see sync_commands function below)
     try:
         synced = await bot.tree.sync()
-        print(f'Synced {len(synced)} command(s)')
+        print(f'✅ Synced {len(synced)} command(s) globally')
+        print('⚠️  Note: Global command sync can take up to 1 hour to appear in Discord')
+        print('   For faster testing, use /sync_commands in your server')
     except Exception as e:
-        print(f'Failed to sync commands: {e}')
+        print(f'❌ Failed to sync commands: {e}')
+        print('   Make sure bot was invited with "applications.commands" scope')
 
 
 @bot.tree.command(name="block", description="Block a user and set keywords they cannot use")
@@ -102,6 +107,27 @@ async def block_command(interaction: discord.Interaction, user: discord.Member, 
     else:
         await interaction.response.send_message(
             "❌ Failed to create block. Please try again.",
+            ephemeral=True
+        )
+
+
+@bot.tree.command(name="sync_commands", description="[Admin] Force sync slash commands to this server (instant)")
+@app_commands.default_permissions(administrator=True)
+async def sync_commands(interaction: discord.Interaction):
+    """
+    Admin-only command to force sync slash commands to the current server.
+    This makes commands appear instantly instead of waiting up to 1 hour.
+    """
+    try:
+        # Sync commands to this specific guild (instant)
+        synced = await bot.tree.sync(guild=interaction.guild)
+        await interaction.response.send_message(
+            f"✅ Synced {len(synced)} command(s) to this server! Commands should appear immediately.",
+            ephemeral=True
+        )
+    except Exception as e:
+        await interaction.response.send_message(
+            f"❌ Failed to sync commands: {str(e)}",
             ephemeral=True
         )
 
