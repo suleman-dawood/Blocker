@@ -54,32 +54,48 @@ async def on_ready():
         print('   Make sure bot was invited with "applications.commands" scope')
 
 
-@bot.tree.command(name="block", description="Block a user and set keywords they cannot use")
+@bot.tree.command(name="block", description="[Admin] Block a user and set keywords they cannot use")
+@app_commands.default_permissions(administrator=True)
 @app_commands.describe(
-    user="The user you want to block",
+    blocker_user="The user who is blocking (leave empty to use yourself)",
+    blocked_user="The user being blocked",
     keywords="Keywords that the blocked user cannot say (separate multiple keywords with spaces)"
 )
-async def block_command(interaction: discord.Interaction, user: discord.Member, keywords: str = ""):
+async def block_command(interaction: discord.Interaction, blocked_user: discord.Member, blocker_user: discord.Member = None, keywords: str = ""):
     """
-    Slash command to block a user.
+    Admin-only slash command to block a user.
+    Admins can block users on behalf of other users.
     
     Args:
         interaction: Discord interaction object
-        user: The member to block
+        blocker_user: The user who is creating the block (optional, defaults to command user)
+        blocked_user: The member being blocked (required)
         keywords: Space-separated list of keywords the blocked user cannot use
     """
-    # Prevent users from blocking themselves
-    if user.id == interaction.user.id:
+    # Check if user has administrator permission
+    if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message(
-            "You cannot block yourself!",
-            ephemeral=True  # Only visible to the command user
+            "❌ You must be an administrator to use this command.",
+            ephemeral=True
+        )
+        return
+    
+    # If blocker_user not provided, use the command user
+    if blocker_user is None:
+        blocker_user = interaction.user
+    
+    # Prevent users from blocking themselves
+    if blocked_user.id == blocker_user.id:
+        await interaction.response.send_message(
+            f"❌ {blocker_user.mention} cannot block themselves!",
+            ephemeral=True
         )
         return
     
     # Prevent blocking the bot
-    if user.id == bot.user.id:
+    if blocked_user.id == bot.user.id:
         await interaction.response.send_message(
-            "You cannot block the bot!",
+            "❌ You cannot block the bot!",
             ephemeral=True
         )
         return
@@ -89,19 +105,28 @@ async def block_command(interaction: discord.Interaction, user: discord.Member, 
     
     # Store block relationship in database
     success = db.add_block(
-        blocker_id=interaction.user.id,
-        blocked_id=user.id,
+        blocker_id=blocker_user.id,
+        blocked_id=blocked_user.id,
         guild_id=interaction.guild_id,
         keywords=keyword_list
     )
     
     if success:
         # Create response message
-        if keyword_list:
-            keyword_text = ", ".join(f"`{kw}`" for kw in keyword_list)
-            message = f"✅ You have blocked {user.mention}.\n\n**Blocked keywords:** {keyword_text}\n\nThey will not be able to:\n• Tag or mention you\n• Reply to your messages\n• React to your messages\n• Use the blocked keywords"
+        if blocker_user.id == interaction.user.id:
+            # User blocking for themselves
+            if keyword_list:
+                keyword_text = ", ".join(f"`{kw}`" for kw in keyword_list)
+                message = f"✅ You have blocked {blocked_user.mention}.\n\n**Blocked keywords:** {keyword_text}\n\nThey will not be able to:\n• Tag or mention you\n• Reply to your messages\n• React to your messages\n• Use the blocked keywords"
+            else:
+                message = f"✅ You have blocked {blocked_user.mention}.\n\nThey will not be able to:\n• Tag or mention you\n• Reply to your messages\n• React to your messages"
         else:
-            message = f"✅ You have blocked {user.mention}.\n\nThey will not be able to:\n• Tag or mention you\n• Reply to your messages\n• React to your messages"
+            # Admin blocking on behalf of another user
+            if keyword_list:
+                keyword_text = ", ".join(f"`{kw}`" for kw in keyword_list)
+                message = f"✅ {blocker_user.mention} has blocked {blocked_user.mention}.\n\n**Blocked keywords:** {keyword_text}\n\n{blocked_user.mention} will not be able to:\n• Tag or mention {blocker_user.mention}\n• Reply to {blocker_user.mention}'s messages\n• React to {blocker_user.mention}'s messages\n• Use the blocked keywords"
+            else:
+                message = f"✅ {blocker_user.mention} has blocked {blocked_user.mention}.\n\n{blocked_user.mention} will not be able to:\n• Tag or mention {blocker_user.mention}\n• Reply to {blocker_user.mention}'s messages\n• React to {blocker_user.mention}'s messages"
         
         await interaction.response.send_message(message, ephemeral=True)
     else:
@@ -109,6 +134,30 @@ async def block_command(interaction: discord.Interaction, user: discord.Member, 
             "❌ Failed to create block. Please try again.",
             ephemeral=True
         )
+
+
+@bot.tree.command(name="reset", description="[Admin] Reset all blocks in this server")
+@app_commands.default_permissions(administrator=True)
+async def reset_command(interaction: discord.Interaction):
+    """
+    Admin-only command to completely reset all blocks in the server.
+    This will delete all block relationships for this server.
+    """
+    # Check if user has administrator permission
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message(
+            "❌ You must be an administrator to use this command.",
+            ephemeral=True
+        )
+        return
+    
+    # Delete all blocks for this guild
+    deleted_count = db.reset_all_blocks(interaction.guild_id)
+    
+    await interaction.response.send_message(
+        f"✅ Reset complete! Deleted {deleted_count} block(s) from this server.",
+        ephemeral=True
+    )
 
 
 @bot.tree.command(name="sync_commands", description="[Admin] Force sync slash commands to this server (instant)")
@@ -132,32 +181,54 @@ async def sync_commands(interaction: discord.Interaction):
         )
 
 
-@bot.tree.command(name="unblock", description="Unblock a user")
+@bot.tree.command(name="unblock", description="[Admin] Unblock a user")
+@app_commands.default_permissions(administrator=True)
 @app_commands.describe(
-    user="The user you want to unblock"
+    blocker_user="The user who created the block (leave empty to use yourself)",
+    blocked_user="The user being unblocked"
 )
-async def unblock_command(interaction: discord.Interaction, user: discord.Member):
+async def unblock_command(interaction: discord.Interaction, blocked_user: discord.Member, blocker_user: discord.Member = None):
     """
-    Slash command to unblock a user.
+    Admin-only slash command to unblock a user.
+    Admins can unblock users on behalf of other users.
     
     Args:
         interaction: Discord interaction object
-        user: The member to unblock
+        blocker_user: The user who created the block (optional, defaults to command user)
+        blocked_user: The member being unblocked (required)
     """
+    # Check if user has administrator permission
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message(
+            "❌ You must be an administrator to use this command.",
+            ephemeral=True
+        )
+        return
+    
+    # If blocker_user not provided, use the command user
+    if blocker_user is None:
+        blocker_user = interaction.user
+    
     success = db.remove_block(
-        blocker_id=interaction.user.id,
-        blocked_id=user.id,
+        blocker_id=blocker_user.id,
+        blocked_id=blocked_user.id,
         guild_id=interaction.guild_id
     )
     
     if success:
-        await interaction.response.send_message(
-            f"✅ You have unblocked {user.mention}.",
-            ephemeral=True
-        )
+        if blocker_user.id == interaction.user.id:
+            await interaction.response.send_message(
+                f"✅ You have unblocked {blocked_user.mention}.",
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                f"✅ {blocker_user.mention} has unblocked {blocked_user.mention}.",
+                ephemeral=True
+            )
     else:
         await interaction.response.send_message(
-            "❌ Failed to remove block. The user may not be blocked.",
+            f"❌ Failed to remove block. {blocked_user.mention} may not be blocked by {blocker_user.mention}.",
             ephemeral=True
         )
 

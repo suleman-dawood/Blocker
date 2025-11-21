@@ -272,6 +272,32 @@ class Database:
             print(f"Error checking keywords: {e}")
             return False, []
     
+    def reset_all_blocks(self, guild_id: int) -> int:
+        """
+        Delete all blocks in a guild.
+        
+        Args:
+            guild_id: Discord server ID
+            
+        Returns:
+            Number of blocks deleted
+        """
+        try:
+            self._ensure_connection()
+            cursor = self.conn.cursor()
+            
+            cursor.execute("""
+                DELETE FROM blocks
+                WHERE guild_id = %s
+            """, (guild_id,))
+            
+            deleted_count = cursor.rowcount
+            cursor.close()
+            return deleted_count
+        except psycopg2.Error as e:
+            print(f"Error resetting blocks: {e}")
+            return 0
+    
     def close(self):
         """Close database connection."""
         if self.conn and not self.conn.closed:
